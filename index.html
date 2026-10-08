@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Class 5A — Classroom Manager (Cloud)</title>
+
+<!-- Firebase SDKs (compat style — plain script tags, no build step) -->
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+
+<style>
+:root{--bg:#0f1117;--surface:#181c27;--surface2:#1e2335;--border:#2a3050;--accent:#00c896;--accent2:#0099ff;--warn:#ffb300;--danger:#ff4757;--text:#e8eaf0;--text2:#8892b0;--text3:#4a5568;--mono:"Courier New",monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;}
+[data-theme="light"]{--bg:#f4f6fb;--surface:#ffffff;--surface2:#eef0f7;--border:#d0d7e8;--text:#1a1f36;--text2:#4a5568;--text3:#9aa5b8;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;min-height:100vh;transition:background .2s,color .2s;}
+
+/* PIN screen (cloud version — see auth note in the script below) */
+#login-screen{position:fixed;inset:0;background:var(--bg);z-index:9998;display:flex;align-items:center;justify-content:center;}
+.login-box{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:40px;text-align:center;width:340px;}
+.login-title{font-size:20px;font-weight:600;margin-bottom:6px;}
+.login-sub{font-size:12px;color:var(--text2);margin-bottom:20px;line-height:1.5;}
+.pin-dots{display:flex;gap:12px;justify-content:center;margin-bottom:20px;}
+.pin-dot{width:14px;height:14px;border-radius:50%;border:2px solid var(--border);transition:all .15s;}
+.pin-dot.filled{background:var(--accent);border-color:var(--accent);}
+.pin-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+.pin-key{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:16px;font-size:18px;font-family:var(--mono);font-weight:600;cursor:pointer;color:var(--text);}
+.pin-key:hover{border-color:var(--accent);}
+.pin-key.del{color:var(--danger);font-size:14px;}
+.login-err{color:var(--danger);font-size:12px;margin-top:10px;text-align:center;min-height:16px;}
+.login-note{font-size:11px;color:var(--text2);margin-top:14px;padding:10px;background:var(--surface2);border-radius:6px;line-height:1.5;text-align:left;}
+.risk-note{font-size:11px;color:var(--warn);margin-top:10px;padding:10px;background:rgba(255,179,0,.08);border:1px solid rgba(255,179,0,.25);border-radius:6px;line-height:1.5;text-align:left;}
+.theme-toggle-pin{position:absolute;top:20px;right:20px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;color:var(--text2);cursor:pointer;}
+.conn-badge{font-size:11px;padding:4px 8px;border-radius:4px;margin-bottom:14px;display:inline-block;}
+.conn-ok{background:rgba(0,200,150,.15);color:var(--accent);}
+.conn-bad{background:rgba(255,71,87,.13);color:var(--danger);}
+
+/* App shell: sidebar layout (unchanged from local version) */
+#appShell{display:flex;min-height:100vh;}
+.sidebar{width:220px;background:var(--surface);border-right:1px solid var(--border);flex-shrink:0;display:flex;flex-direction:column;min-height:100vh;position:sticky;top:0;}
+.sidebar-head{padding:20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;}
+.logo-icon{width:32px;height:32px;background:var(--accent);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;}
+.logo-text{font-family:var(--mono);font-size:13px;line-height:1.4;}
+.logo-text span{color:var(--accent);}
+.sb-nav{padding:12px 8px;flex:1;}
+.nb{display:flex;align-items:center;gap:10px;width:100%;background:none;border:none;color:var(--text2);font-family:var(--sans);font-size:13px;font-weight:500;padding:11px 12px;cursor:pointer;border-radius:6px;text-align:left;margin-bottom:2px;}
+.nb:hover{color:var(--text);background:var(--surface2);}
+.nb.active{color:var(--accent);background:rgba(0,200,150,.1);}
+.nb .ic{font-size:15px;width:18px;text-align:center;}
+.sb-foot{padding:12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px;}
+.acct-email{font-size:11px;color:var(--text3);padding:0 4px;word-break:break-all;}
+.tbtn,.lbtn{background:none;border:1px solid var(--border);border-radius:6px;color:var(--text2);padding:8px 10px;cursor:pointer;font-size:12px;font-family:var(--sans);width:100%;}
+.tbtn:hover{border-color:var(--accent);color:var(--accent);}
+.lbtn:hover{border-color:var(--danger);color:var(--danger);}
+
+main{flex:1;padding:28px 32px;max-width:1000px;}
+
+.srow{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin-bottom:24px;}
+.sc{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:18px;position:relative;overflow:hidden;}
+.sc::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:var(--accent);}
+.sc.w::before{background:var(--warn);}
+.slabel{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;}
+.sval{font-family:var(--mono);font-size:28px;font-weight:600;}
+.ssub{font-size:11px;color:var(--text3);margin-top:4px;}
+
+.sh{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;}
+.st{font-size:15px;font-weight:600;}
+.st span{color:var(--text2);font-weight:400;font-size:13px;margin-left:8px;}
+
+.btn{display:inline-flex;align-items:center;gap:6px;border:none;border-radius:6px;cursor:pointer;font-family:var(--sans);font-size:13px;font-weight:500;padding:8px 16px;transition:all .15s;}
+.bp{background:var(--accent);color:#000;}
+.bp:hover{background:#00dfa8;}
+.bs{background:var(--surface2);color:var(--text);border:1px solid var(--border);}
+.bs:hover{border-color:var(--accent);color:var(--accent);}
+.bd{background:var(--danger);color:#fff;}
+.bsm{padding:5px 10px;font-size:12px;}
+.pill-present{border:1px solid var(--accent);color:var(--accent);background:none;}
+.pill-present.active{background:var(--accent);color:#000;}
+.pill-absent{border:1px solid var(--danger);color:var(--danger);background:none;}
+.pill-absent.active{background:var(--danger);color:#fff;}
+.pill-late{border:1px solid var(--warn);color:var(--warn);background:none;}
+.pill-late.active{background:var(--warn);color:#000;}
+.pill-excused{border:1px solid var(--accent2);color:var(--accent2);background:none;}
+.pill-excused.active{background:var(--accent2);color:#fff;}
+
+.tw{background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+table{width:100%;border-collapse:collapse;}
+thead{background:var(--surface2);}
+th{padding:11px 14px;text-align:left;font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);}
+td{padding:11px 14px;border-bottom:1px solid var(--border);color:var(--text);font-size:13px;}
+tr:last-child td{border-bottom:none;}
+tr:hover td{background:rgba(128,128,128,.05);}
+
+.badge{display:inline-block;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600;font-family:var(--mono);}
+.bok{background:rgba(0,200,150,.15);color:var(--accent);}
+.bpos{background:rgba(0,200,150,.15);color:var(--accent);}
+.bcon{background:rgba(255,71,87,.13);color:var(--danger);}
+.bgen{background:rgba(0,153,255,.13);color:var(--accent2);}
+
+label{font-size:12px;color:var(--text2);font-weight:500;display:block;margin-bottom:6px;}
+input,select{background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--sans);font-size:13px;padding:9px 12px;outline:none;width:100%;}
+input:focus,select:focus{border-color:var(--accent);}
+.fg{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.fgp.full{grid-column:1/-1;}
+.form-box{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:18px;margin-bottom:20px;display:grid;gap:12px;}
+
+.note-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:14px;}
+.note-line{font-size:13px;color:var(--text2);margin-bottom:8px;padding-left:10px;border-left:2px solid var(--border);display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;}
+.note-date{color:var(--text3);font-size:11px;font-family:var(--mono);}
+.note-cat-select{width:auto;padding:6px 8px;font-size:12px;}
+
+.empty{text-align:center;padding:48px;color:var(--text3);}
+.eico{font-size:36px;margin-bottom:12px;}
+.hidden{display:none!important;}
+.banner{font-size:13px;padding:10px 14px;border-radius:6px;margin-bottom:18px;}
+.banner.error{background:#fbeee7;color:#a5502f;border:1px solid #e9c4ac;}
+.banner.info{background:rgba(0,153,255,.1);color:var(--accent2);border:1px solid rgba(0,153,255,.25);}
+
+.access-code-row{display:flex;align-items:center;gap:8px;}
+.access-code-row code{font-family:var(--mono);font-size:12px;background:var(--surface2);padding:3px 8px;border-radius:4px;border:1px solid var(--border);}
+
+.week-grid{display:grid;grid-template-columns:1.6fr repeat(5,1fr);gap:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+.week-grid > div{padding:10px 12px;border-bottom:1px solid var(--border);font-size:12px;display:flex;align-items:center;justify-content:center;text-align:center;}
+.week-grid > div:first-child{justify-content:flex-start;text-align:left;font-weight:500;}
+.week-head{background:var(--surface2);font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);font-weight:600;}
+.att-cell{width:26px;height:26px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;margin:0 auto;}
+.att-cell.present{background:rgba(0,200,150,.15);color:var(--accent);}
+.att-cell.absent{background:rgba(255,71,87,.13);color:var(--danger);}
+.att-cell.late{background:rgba(255,179,0,.13);color:var(--warn);}
+.att-cell.excused{background:rgba(0,153,255,.13);color:var(--accent2);}
+.att-cell.none{background:var(--surface2);color:var(--text3);}
+
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+@media (max-width:768px){
+  #appShell{flex-direction:column;}
+  .sidebar{width:100%;position:static;flex-direction:row;align-items:center;overflow-x:auto;min-height:auto;}
+  .sidebar-head{border-bottom:none;border-right:1px solid var(--border);}
+  .sb-nav{display:flex;flex:none;padding:8px;}
+  .sb-foot{flex-direction:row;border-top:none;border-left:1px solid var(--border);}
+  main{padding:16px;}
+  .srow{grid-template-columns:1fr 1fr;}
+  .fg{grid-template-columns:1fr;}
+  .tw{overflow-x:auto;}
+  table{min-width:480px;}
+  .week-grid{overflow-x:auto;grid-template-columns:1.4fr repeat(5,60px);font-size:11px;min-width:520px;}
+}
+</style>
+</head>
+<body>
+
+<!-- LOGIN SCREEN (PIN-gated; see auth note in script) -->
+<div id="login-screen">
+  <button class="theme-toggle-pin" id="pinThemeToggle">☀️ Light</button>
+  <div class="login-box">
+    <div class="login-title">Class 5A</div>
+    <div class="login-sub" id="pinSub">Enter your teacher PIN</div>
+    <div id="connBadge" class="conn-badge">Connecting…</div>
+    <div class="pin-dots">
+      <div class="pin-dot" id="pd0"></div>
+      <div class="pin-dot" id="pd1"></div>
+      <div class="pin-dot" id="pd2"></div>
+      <div class="pin-dot" id="pd3"></div>
+    </div>
+    <div class="login-err" id="loginError"></div>
+    <div class="pin-pad">
+      <button class="pin-key" onclick="pinKey('1')">1</button>
+      <button class="pin-key" onclick="pinKey('2')">2</button>
+      <button class="pin-key" onclick="pinKey('3')">3</button>
+      <button class="pin-key" onclick="pinKey('4')">4</button>
+      <button class="pin-key" onclick="pinKey('5')">5</button>
+      <button class="pin-key" onclick="pinKey('6')">6</button>
+      <button class="pin-key" onclick="pinKey('7')">7</button>
+      <button class="pin-key" onclick="pinKey('8')">8</button>
+      <button class="pin-key" onclick="pinKey('9')">9</button>
+      <button class="pin-key" style="grid-column:2" onclick="pinKey('0')">0</button>
+      <button class="pin-key del" onclick="pinDel()">⌫</button>
+    </div>
+    <div class="login-note">Cloud version — data syncs and is reachable from any device you unlock this app on.</div>
+    <div class="risk-note">⚠ TESTING MODE: this database has NO security rules active — anyone with this project's config can read/write it directly, PIN or not. Solo testing only. Do not add real student data or share this file until this is locked down.</div>
+  </div>
+</div>
+
+<!-- APP SHELL -->
+<div id="appShell" class="hidden">
+  <div class="sidebar">
+    <div class="sidebar-head">
+      <div class="logo-icon">🏫</div>
+      <div class="logo-text">CLASS<span>5A</span><br>Cloud</div>
+    </div>
+    <div class="sb-nav">
+      <button class="nb active" data-view="dashboard"><span class="ic">📊</span>Dashboard</button>
+      <button class="nb" data-view="roster"><span class="ic">🧒</span>Students</button>
+      <button class="nb" data-view="attendance"><span class="ic">✅</span>Attendance</button>
+      <button class="nb" data-view="grades"><span class="ic">📝</span>Grades</button>
+      <button class="nb" data-view="notes"><span class="ic">🗒️</span>Notes</button>
+    </div>
+    <div class="sb-foot">
+      <button class="tbtn" id="themeToggle">☀️ Light</button>
+      <button class="lbtn" id="signOutBtn">Lock</button>
+    </div>
+  </div>
+
+  <main id="main"></main>
+</div>
+
+<script>
+  // ============================================================
+  // CLOUD VERSION — same features and UI as the local/offline app,
+  // but backed by real Firebase Auth (teacher login) and Firestore
+  // (shared, multi-device data). This runs ALONGSIDE the local
+  // version, not replacing it — pick whichever you want to use
+  // day to day; nothing here touches the local version's data.
+  //
+  // Data shape (matches the security rules already written):
+  //   /students/{accessCode}
+  //   /students/{accessCode}/attendance/{date}
+  //   /students/{accessCode}/grades/{assignment}
+  //   /students/{accessCode}/notes/{noteId}
+  // ============================================================
+
+  const FIREBASE_CONFIG = {
+    apiKey: "AIzaSyBIX7pTbcxdbhv9bD04zCYZm_SaWmoFKSg",
+    authDomain: "classmanager-2776b.firebaseapp.com",
+    projectId: "classmanager-2776b",
+    storageBucket: "classmanager-2776b.firebasestorage.app",
+    messagingSenderId: "982534297826",
+    appId: "1:982534297826:web:fbee27b128f862837fe6bb"
+  };
+
+  let firebaseInitError = null;
+  let auth, db;
+  try {
+    firebase.initializeApp(FIREBASE_CONFIG);
+    auth = firebase.auth();
+    db = firebase.firestore();
+  } catch (err) {
+    firebaseInitError = err;
+    console.error("Firebase failed to initialize:", err);
+  }
+
+  // ============================================================
+  // ⚠️ TEMPORARY TESTING CONFIGURATION — READ BEFORE SHARING ⚠️
+  // ------------------------------------------------------------
+  // This version connects to Firestore with NO Firebase Auth
+  // identity at all. It relies entirely on the database's security
+  // rules being fully open (allow read, write: if true — see
+  // firestore-OPEN-TESTING-ONLY.rules). The PIN below is a LOCAL
+  // UI GATE ONLY: it decides whether THIS BROWSER shows the app.
+  // It does NOT restrict the database itself in any way.
+  //
+  // Anyone who has this file's Firebase config values — visible
+  // right in this file's source — can read and write every
+  // document in this project directly, with no PIN, no login,
+  // nothing in the way. This is accepted deliberately for solo
+  // testing only. BEFORE any real teacher, parent, or student
+  // data goes in, or before this file is shared with anyone else:
+  //   1. Replace the Firestore rules with the locked-down version
+  //      (firestore.rules — requires a real "teacher" identity)
+  //   2. Re-enable real sign-in (see the earlier hidden-account
+  //      or email/password versions of this app for that pattern)
+  // ============================================================
+
+  const PIN_KEY = "classroom_5a_cloud_pin";
+  let pinBuffer = "";
+  let firebaseSignedIn = true; // no auth step in this testing config — connection is open
+
+  function getStoredPin() { return localStorage.getItem(PIN_KEY); }
+
+  function initPinScreen() {
+    const storedPin = getStoredPin();
+    if (!storedPin) {
+      document.getElementById("pinSub").textContent = "Set a 4-digit PIN for this device";
+    } else {
+      document.getElementById("pinSub").textContent = "Enter your teacher PIN";
+    }
+  }
+  function renderPinDots() {
+    for (let i = 0; i < 4; i++) document.getElementById("pd" + i).classList.toggle("filled", i < pinBuffer.length);
+  }
+  function pinKey(digit) {
+    if (pinBuffer.length >= 4) return;
+    pinBuffer += digit;
+    renderPinDots();
+    if (pinBuffer.length === 4) setTimeout(submitPin, 150);
+  }
+  function pinDel() {
+    pinBuffer = pinBuffer.slice(0, -1);
+    renderPinDots();
+    document.getElementById("loginError").textContent = "";
+  }
+  function submitPin() {
+    const storedPin = getStoredPin();
+    const errorEl = document.getElementById("loginError");
+    if (!storedPin) {
+      localStorage.setItem(PIN_KEY, pinBuffer);
+      tryUnlock();
+      return;
+    }
+    if (pinBuffer === storedPin) {
+      tryUnlock();
+    } else {
+      errorEl.textContent = "Incorrect PIN. Try again.";
+      pinBuffer = "";
+      renderPinDots();
+    }
+  }
+
+  function tryUnlock() {
+    pinBuffer = "";
+    document.getElementById("login-screen").classList.add("hidden");
+    document.getElementById("appShell").classList.remove("hidden");
+    document.getElementById("appShell").style.display = "flex";
+    render();
+  }
+
+  document.getElementById("signOutBtn").addEventListener("click", () => {
+    document.getElementById("appShell").classList.add("hidden");
+    document.getElementById("login-screen").classList.remove("hidden");
+    initPinScreen();
+    renderPinDots();
+  });
+
+  // Connection badge — reflects whether Firebase actually initialized.
+  // (If this shows an error, the PIN pad below will still work —
+  // it no longer depends on Firebase succeeding first.)
+  const badge = document.getElementById("connBadge");
+  if (firebaseInitError) {
+    badge.textContent = "Firebase failed to connect — check console for error";
+    badge.className = "conn-badge conn-bad";
+  } else {
+    badge.textContent = "Connected (open testing mode — no auth)";
+    badge.className = "conn-badge conn-bad";
+  }
+
+  const THEME_KEY = "classroom_5a_theme";
+  let students = []; // hydrated live from Firestore
+  let view = "dashboard";
+  let editingStudentCode = null;
+  let unsubscribeStudents = null;
+  const todayDate = new Date();
+  const today = todayDate.toISOString().slice(0, 10);
+
+  function getWeekDates() {
+    const d = new Date(todayDate);
+    const day = d.getDay();
+    const mondayOffset = day === 0 ? -6 : 1 - day;
+    const monday = new Date(d);
+    monday.setDate(d.getDate() + mondayOffset);
+    const dates = [];
+    for (let i = 0; i < 5; i++) {
+      const dt = new Date(monday);
+      dt.setDate(monday.getDate() + i);
+      dates.push(dt.toISOString().slice(0, 10));
+    }
+    return dates;
+  }
+  const weekDates = getWeekDates();
+  const weekDayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+
+  // ---- Theme ----
+  function applyTheme(theme) {
+    if (theme === "light") document.documentElement.setAttribute("data-theme", "light");
+    else document.documentElement.removeAttribute("data-theme");
+    const label = theme === "light" ? "🌙 Dark" : "☀️ Light";
+    const t1 = document.getElementById("themeToggle");
+    const t2 = document.getElementById("pinThemeToggle");
+    if (t1) t1.textContent = label;
+    if (t2) t2.textContent = label;
+  }
+  function toggleTheme() {
+    const current = localStorage.getItem(THEME_KEY) || "dark";
+    const next = current === "dark" ? "light" : "dark";
+    localStorage.setItem(THEME_KEY, next);
+    applyTheme(next);
+  }
+  document.getElementById("themeToggle").addEventListener("click", toggleTheme);
+  document.getElementById("pinThemeToggle").addEventListener("click", toggleTheme);
+  applyTheme(localStorage.getItem(THEME_KEY) || "dark");
+
+  // ---- Helpers ----
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str || "";
+    return div.innerHTML;
+  }
+  // Safe random-ID generator: uses crypto.randomUUID() where available
+  // (modern browsers), falls back to Math.random()-based IDs otherwise
+  // (some Android WebView builds used for APK wrapping lack randomUUID).
+  function randomId() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return window.crypto.randomUUID();
+    }
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+      const r = Math.random() * 16 | 0;
+      const v = c === "x" ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+  function generateAccessCode() { return randomId().split("-").slice(0, 3).join("-"); }
+  function average(scores) {
+    if (!scores.length) return "—";
+    return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+  }
+  function findStudent(code) { return students.find((s) => s.accessCode === code); }
+  function catClass(cat) { return cat === "positive" ? "bpos" : cat === "concern" ? "bcon" : "bgen"; }
+  function catLabel(cat) { return cat === "positive" ? "Positive" : cat === "concern" ? "Concern" : "General"; }
+
+  // ---- Connectivity badge shown before sign-in resolves ----
+  // (checkConnection() removed — the silent sign-in above now
+  // reports connection status directly via connBadge.)
+
+  // ---- Firestore: live roster + nested subcollections ----
+  // Guards against overlapping updates: Firestore's onSnapshot fires
+  // again every time ANY write happens (including our own writes,
+  // like marking attendance). Each firing re-fetches every student's
+  // subcollections, which takes a moment. Without a guard, a second
+  // snapshot firing before the first finishes processing would start
+  // a second, overlapping hydrate+render pass — the two can race and
+  // leave the UI stuck showing stale data or appearing unresponsive.
+  // We queue: if a hydrate is already running, remember that a newer
+  // snapshot arrived and re-run once the current pass finishes.
+  let hydrateInProgress = false;
+  let pendingSnapshot = null;
+
+  function attachStudentsListener() {
+    if (unsubscribeStudents) unsubscribeStudents();
+    unsubscribeStudents = db.collection("students").onSnapshot(
+      (snapshot) => { handleSnapshot(snapshot); },
+      (err) => {
+        console.error(err);
+        const main = document.getElementById("main");
+        if (main) main.innerHTML = `<div class="banner error">Could not load students from Firebase. Check your internet connection, or that your account has been added to the "teachers" collection (see setup notes).</div>`;
+      }
+    );
+  }
+
+  async function handleSnapshot(snapshot) {
+    if (hydrateInProgress) {
+      pendingSnapshot = snapshot; // remember the latest, process after current pass
+      return;
+    }
+    hydrateInProgress = true;
+    try {
+      const nextStudents = [];
+      for (const doc of snapshot.docs) {
+        nextStudents.push({ accessCode: doc.id, ...doc.data() });
+      }
+      students = nextStudents;
+      await hydrateSubcollections();
+      render();
+    } catch (err) {
+      console.error("Error processing snapshot:", err);
+    } finally {
+      hydrateInProgress = false;
+      if (pendingSnapshot) {
+        const next = pendingSnapshot;
+        pendingSnapshot = null;
+        handleSnapshot(next);
+      }
+    }
+  }
+
+  async function hydrateSubcollections() {
+    for (const s of students) {
+      const [attSnap, gradesSnap, notesSnap] = await Promise.all([
+        db.collection("students").doc(s.accessCode).collection("attendance").get(),
+        db.collection("students").doc(s.accessCode).collection("grades").get(),
+        db.collection("students").doc(s.accessCode).collection("notes").get(),
+      ]);
+      s.attendance = {};
+      attSnap.forEach((d) => { s.attendance[d.id] = d.data().status; });
+      s.grades = [];
+      gradesSnap.forEach((d) => { s.grades.push({ assignment: d.id, score: d.data().score }); });
+      s.notes = [];
+      notesSnap.forEach((d) => { s.notes.push({ id: d.id, ...d.data() }); });
+      s.notes.sort((a, b) => (a.date < b.date ? 1 : -1));
+    }
+  }
+
+  // ---- Actions: Students ----
+  function toggleAddForm() { document.getElementById("addFormBox").classList.toggle("hidden"); }
+
+  async function addStudent() {
+    const name = document.getElementById("newName").value.trim();
+    const guardian = document.getElementById("newGuardian").value.trim();
+    if (!name) return;
+    const accessCode = generateAccessCode();
+    try {
+      await db.collection("students").doc(accessCode).set({ name, guardian, createdAt: new Date().toISOString() });
+      document.getElementById("addFormBox").classList.add("hidden");
+    } catch (err) {
+      console.error(err);
+      alert("Could not save the student. Check your connection and try again.");
+    }
+  }
+
+  function copyCode(code) { navigator.clipboard.writeText(code); }
+  function startStudentEdit(code) { editingStudentCode = code; render(); }
+  function cancelStudentEdit() { editingStudentCode = null; render(); }
+
+  async function saveStudentEdit(code) {
+    const newName = document.getElementById("editName-" + code).value.trim();
+    const newGuardian = document.getElementById("editGuardian-" + code).value.trim();
+    if (!newName) return;
+    try {
+      await db.collection("students").doc(code).update({ name: newName, guardian: newGuardian });
+      editingStudentCode = null;
+    } catch (err) {
+      console.error(err);
+      alert("Could not save changes. Try again.");
+    }
+  }
+
+  async function deleteStudent(code) {
+    const s = findStudent(code);
+    if (!confirm(`Remove ${s.name} from the class? This deletes their attendance, grades, and notes too. This cannot be undone.`)) return;
+    try {
+      // Delete subcollection docs first, then the student doc itself.
+      const subcollections = ["attendance", "grades", "notes"];
+      for (const sub of subcollections) {
+        const snap = await db.collection("students").doc(code).collection(sub).get();
+        await Promise.all(snap.docs.map((d) => d.ref.delete()));
+      }
+      await db.collection("students").doc(code).delete();
+    } catch (err) {
+      console.error(err);
+      alert("Could not remove this student. Try again.");
+    }
+  }
+
+  // ---- Actions: Attendance ----
+  async function markAttendance(code, status) {
+    try {
+      await db.collection("students").doc(code).collection("attendance").doc(today).set({ status, date: today });
+    } catch (err) {
+      console.error(err);
+      alert("Could not save attendance. Try again.");
+    }
+  }
+
+  // Marks everyone present in one go — teacher then taps exceptions
+  // (late, absent, excused) individually, which is faster than
+  // tapping "present" for every single student every day.
+  async function markAllPresent() {
+    try {
+      await Promise.all(students.map((s) =>
+        db.collection("students").doc(s.accessCode).collection("attendance").doc(today).set({ status: "present", date: today })
+      ));
+    } catch (err) {
+      console.error(err);
+      alert("Could not mark everyone present. Try again.");
+    }
+  }
+
+  // ---- Actions: Grades / Assignments ----
+  // Assignment metadata (description, due date) lives once per
+  // assignment in its own "assignments" collection, separate from
+  // the per-student score docs — avoids duplicating the same
+  // description/due-date into every single student's grade record.
+  function toggleAssignmentForm() { document.getElementById("assignmentFormBox").classList.toggle("hidden"); }
+
+  async function addAssignment() {
+    const title = document.getElementById("newAssignmentName").value.trim();
+    const description = document.getElementById("newAssignmentDesc").value.trim();
+    const dueDate = document.getElementById("newAssignmentDue").value;
+    if (!title) return;
+    try {
+      await db.collection("assignments").doc(title).set({ description, dueDate: dueDate || null, createdAt: new Date().toISOString() });
+      await Promise.all(students.map((s) => {
+        const exists = s.grades.some((g) => g.assignment === title);
+        if (exists) return Promise.resolve();
+        return db.collection("students").doc(s.accessCode).collection("grades").doc(title).set({ score: null });
+      }));
+      document.getElementById("newAssignmentName").value = "";
+      document.getElementById("newAssignmentDesc").value = "";
+      document.getElementById("newAssignmentDue").value = "";
+      document.getElementById("assignmentFormBox").classList.add("hidden");
+      await loadAssignmentMeta();
+      render();
+    } catch (err) {
+      console.error(err);
+      alert("Could not create the assignment. Try again.");
+    }
+  }
+
+  let assignmentMeta = {}; // { title: { description, dueDate } }
+  async function loadAssignmentMeta() {
+    try {
+      const snap = await db.collection("assignments").get();
+      assignmentMeta = {};
+      snap.forEach((d) => { assignmentMeta[d.id] = d.data(); });
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function setScore(code, assignment, value) {
+    const num = value === "" ? null : Math.max(0, Math.min(100, Number(value)));
+    try {
+      await db.collection("students").doc(code).collection("grades").doc(assignment).set({ score: num });
+    } catch (err) {
+      console.error(err);
+      alert("Could not save the score. Try again.");
+    }
+  }
+
+  function getAllAssignments() {
+    const names = new Set();
+    students.forEach((s) => s.grades.forEach((g) => names.add(g.assignment)));
+    return Array.from(names);
+  }
+
+  // ---- Actions: Notes ----
+  async function addNote(code) {
+    const input = document.getElementById("noteInput-" + code);
+    const catSelect = document.getElementById("noteCat-" + code);
+    const text = input.value.trim();
+    if (!text) return;
+    try {
+      await db.collection("students").doc(code).collection("notes").add({ text, date: today, category: catSelect.value });
+    } catch (err) {
+      console.error(err);
+      alert("Could not save the note. Try again.");
+    }
+  }
+
+  async function deleteNote(code, noteId) {
+    try {
+      await db.collection("students").doc(code).collection("notes").doc(noteId).delete();
+    } catch (err) {
+      console.error(err);
+      alert("Could not delete the note. Try again.");
+    }
+  }
+
+  function setView(v) { view = v; render(); }
+
+  // ---- Render: Dashboard ----
+  function renderDashboard() {
+    const total = students.length;
+    const presentToday = students.filter((s) => s.attendance[today] === "present").length;
+    const totalNotes = students.reduce((sum, s) => sum + s.notes.length, 0);
+    const concernNotes = students.reduce((sum, s) => sum + s.notes.filter((n) => n.category === "concern").length, 0);
+
+    return `
+      <div class="sh"><div class="st">Dashboard <span>${today} · synced live</span></div></div>
+      <div class="srow">
+        <div class="sc">
+          <div class="slabel">Students</div>
+          <div class="sval">${total}</div>
+          <div class="ssub">enrolled in Class 5A</div>
+        </div>
+        <div class="sc">
+          <div class="slabel">Present Today</div>
+          <div class="sval">${presentToday}/${total}</div>
+          <div class="ssub">attendance marked</div>
+        </div>
+        <div class="sc ${concernNotes ? 'w' : ''}">
+          <div class="slabel">Notes on File</div>
+          <div class="sval">${totalNotes}</div>
+          <div class="ssub">${concernNotes} flagged as concerns</div>
+        </div>
+      </div>
+      <div class="tw" style="padding:16px;">
+        <div class="st" style="margin-bottom:10px;">Quick actions</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn bp" onclick="setView('attendance')">Mark attendance</button>
+          <button class="btn bs" onclick="setView('roster')">Add a student</button>
+          <button class="btn bs" onclick="setView('grades')">Add an assignment</button>
+          <button class="btn bs" onclick="setView('notes')">Add a note</button>
+        </div>
+      </div>
+    `;
+  }
+
+  // ---- Render: Students ----
+  function renderRoster() {
+    const rows = students.map((s) => {
+      const isEditing = editingStudentCode === s.accessCode;
+      if (isEditing) {
+        return `
+          <tr>
+            <td><input id="editName-${s.accessCode}" value="${escapeHtml(s.name)}" style="padding:6px 8px;"></td>
+            <td><input id="editGuardian-${s.accessCode}" value="${escapeHtml(s.guardian || '')}" style="padding:6px 8px;"></td>
+            <td>
+              <button class="btn bp bsm" onclick="saveStudentEdit('${s.accessCode}')">Save</button>
+              <button class="btn bs bsm" onclick="cancelStudentEdit()">Cancel</button>
+            </td>
+          </tr>
+        `;
+      }
+      return `
+        <tr>
+          <td>${escapeHtml(s.name)}</td>
+          <td>${escapeHtml(s.guardian || "—")}</td>
+          <td>
+            <div class="access-code-row">
+              <code>${s.accessCode}</code>
+              <button class="btn bs bsm" onclick="copyCode('${s.accessCode}')">Copy</button>
+              <button class="btn bs bsm" onclick="startStudentEdit('${s.accessCode}')">Edit</button>
+              <button class="btn bd bsm" onclick="deleteStudent('${s.accessCode}')">Remove</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    return `
+      <div class="sh">
+        <div class="st">Students <span>${students.length} enrolled</span></div>
+        <button class="btn bp" onclick="toggleAddForm()">+ Add student</button>
+      </div>
+
+      <div class="form-box hidden" id="addFormBox">
+        <div class="fg">
+          <div class="fgp"><label>Full name</label><input id="newName" placeholder="e.g. Amara Osei"></div>
+          <div class="fgp"><label>Guardian name</label><input id="newGuardian" placeholder="e.g. F. Osei"></div>
+        </div>
+        <button class="btn bp" style="justify-self:start;" onclick="addStudent()">Save student</button>
+      </div>
+
+      ${students.length ? `
+        <div class="tw">
+          <table>
+            <thead><tr><th>Name</th><th>Guardian</th><th>Parent access code</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      ` : `<div class="empty"><div class="eico">🧒</div>No students yet — add your first one above.</div>`}
+    `;
+  }
+
+  // ---- Render: Attendance ----
+  const ATT_SYMBOLS = { present: "✓", absent: "✕", late: "⏰", excused: "✎" };
+  function attClass(status) { return status === "present" || status === "absent" || status === "late" || status === "excused" ? status : "none"; }
+  function attSymbol(status) { return ATT_SYMBOLS[status] || "–"; }
+
+  function renderAttendance() {
+    const presentCount = students.filter((s) => s.attendance[today] === "present").length;
+    const todayRows = students.map((s) => {
+      const status = s.attendance[today];
+      return `
+        <tr>
+          <td>${escapeHtml(s.name)}</td>
+          <td>
+            <button class="btn bsm pill-present ${status === 'present' ? 'active' : ''}" onclick="markAttendance('${s.accessCode}','present')">Present</button>
+            <button class="btn bsm pill-absent ${status === 'absent' ? 'active' : ''}" onclick="markAttendance('${s.accessCode}','absent')">Absent</button>
+            <button class="btn bsm pill-late ${status === 'late' ? 'active' : ''}" onclick="markAttendance('${s.accessCode}','late')">Late</button>
+            <button class="btn bsm pill-excused ${status === 'excused' ? 'active' : ''}" onclick="markAttendance('${s.accessCode}','excused')">Excused</button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    const weekRows = students.map((s) => {
+      const cells = weekDates.map((d) => {
+        const status = s.attendance[d];
+        return `<div><div class="att-cell ${attClass(status)}">${attSymbol(status)}</div></div>`;
+      }).join("");
+      return `<div>${escapeHtml(s.name)}</div>${cells}`;
+    }).join("");
+
+    const weekHeadCells = weekDayLabels.map((label, i) => `<div class="week-head">${label}<br><span style="font-weight:400;">${weekDates[i].slice(5)}</span></div>`).join("");
+
+    return `
+      <div class="sh">
+        <div class="st">Attendance <span>${today}</span></div>
+        <button class="btn bp" onclick="markAllPresent()">✓ Mark all present</button>
+      </div>
+      <p class="sans" style="color:var(--text2); font-size:12px; margin:-8px 0 16px;">Mark everyone present in one tap, then adjust exceptions (late, absent, excused) individually.</p>
+      <div class="srow" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">
+        <div class="sc"><div class="slabel">Present</div><div class="sval">${presentCount}</div></div>
+        <div class="sc w"><div class="slabel">Total</div><div class="sval">${students.length}</div></div>
+      </div>
+
+      ${students.length ? `
+        <div class="tw"><table><thead><tr><th>Name</th><th>Today</th></tr></thead><tbody>${todayRows}</tbody></table></div>
+
+        <div class="st" style="margin:22px 0 10px;">This week</div>
+        <div class="week-grid">
+          <div class="week-head">Student</div>${weekHeadCells}
+          ${weekRows}
+        </div>
+      ` : `<div class="empty"><div class="eico">📋</div>Add students first.</div>`}
+    `;
+  }
+
+  // ---- Render: Grades ----
+  function renderGrades() {
+    const assignments = getAllAssignments();
+    const rows = students.map((s) => {
+      const cells = assignments.map((a) => {
+        const g = s.grades.find((g) => g.assignment === a);
+        const val = g && g.score !== null && g.score !== undefined ? g.score : "";
+        return `<td><input type="number" min="0" max="100" value="${val}" style="width:70px; padding:6px 8px;" onchange="setScore('${s.accessCode}','${a.replace(/'/g, "\\'")}', this.value)"></td>`;
+      }).join("");
+      const scores = s.grades.map((g) => g.score).filter((v) => v !== null && v !== undefined);
+      return `<tr><td>${escapeHtml(s.name)}</td>${cells}<td><span class="badge bok">${average(scores)}</span></td></tr>`;
+    }).join("");
+    const headCells = assignments.map((a) => `<th>${escapeHtml(a)}</th>`).join("");
+
+    const assignmentCards = assignments.map((a) => {
+      const meta = assignmentMeta[a] || {};
+      const due = meta.dueDate ? `Due ${meta.dueDate}` : "No due date set";
+      return `
+        <div class="note-card" style="margin-bottom:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:6px;">
+            <div style="font-weight:600;">${escapeHtml(a)}</div>
+            <span class="badge bgen">${escapeHtml(due)}</span>
+          </div>
+          ${meta.description ? `<div style="color:var(--text2); font-size:13px; margin-top:6px;">${escapeHtml(meta.description)}</div>` : ""}
+        </div>
+      `;
+    }).join("");
+
+    return `
+      <div class="sh">
+        <div class="st">Grades</div>
+        <button class="btn bp" onclick="toggleAssignmentForm()">+ New assignment</button>
+      </div>
+
+      <div class="form-box hidden" id="assignmentFormBox">
+        <div class="fg">
+          <div class="fgp full"><label>Assignment name</label><input id="newAssignmentName" placeholder="e.g. Spelling Test 3" onkeydown="if(event.key==='Enter') addAssignment()"></div>
+        </div>
+        <div class="fg">
+          <div class="fgp"><label>Due date (optional)</label><input type="date" id="newAssignmentDue"></div>
+          <div class="fgp"><label>Description (optional)</label><input id="newAssignmentDesc" placeholder="e.g. Covers chapters 3-4"></div>
+        </div>
+        <button class="btn bp" style="justify-self:start;" onclick="addAssignment()">Add assignment</button>
+      </div>
+
+      ${assignments.length ? `<div class="st" style="margin-bottom:10px;">Assignments</div>${assignmentCards}` : ""}
+
+      ${students.length && assignments.length ? `
+        <div class="st" style="margin:22px 0 10px;">Scores</div>
+        <div class="tw"><table><thead><tr><th>Name</th>${headCells}<th>Average</th></tr></thead><tbody>${rows}</tbody></table></div>
+      ` : students.length ? `<div class="empty"><div class="eico">📝</div>No assignments yet — add one above.</div>` : `<div class="empty"><div class="eico">📊</div>Add students first.</div>`}
+    `;
+  }
+
+  // ---- Render: Notes ----
+  function renderNotes() {
+    const cards = students.map((s) => {
+      const sortedNotes = [...s.notes].sort((a, b) => (a.date < b.date ? 1 : -1));
+      const notesHtml = sortedNotes.map((n) => `
+        <div class="note-line">
+          <span class="note-date">${n.date}</span>
+          <span class="badge ${catClass(n.category || 'general')}">${catLabel(n.category || 'general')}</span>
+          <span style="flex:1;">${escapeHtml(n.text)}</span>
+          <button class="btn bd bsm" onclick="deleteNote('${s.accessCode}','${n.id}')">Delete</button>
+        </div>
+      `).join("") || `<div class="note-line" style="border:none; padding-left:0; color:var(--text3);">No notes yet.</div>`;
+
+      return `
+        <div class="note-card">
+          <div style="font-weight:600; margin-bottom:10px;">${escapeHtml(s.name)}</div>
+          ${notesHtml}
+          <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+            <select class="note-cat-select" id="noteCat-${s.accessCode}">
+              <option value="general">General</option>
+              <option value="positive">Positive</option>
+              <option value="concern">Concern</option>
+            </select>
+            <input id="noteInput-${s.accessCode}" placeholder="Add a note..." style="flex:1; min-width:160px;" onkeydown="if(event.key==='Enter') addNote('${s.accessCode}')">
+            <button class="btn bp bsm" onclick="addNote('${s.accessCode}')">Add</button>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    return `
+      <div class="sh"><div class="st">Notes</div></div>
+      ${students.length ? cards : `<div class="empty"><div class="eico">📝</div>Add students first.</div>`}
+    `;
+  }
+
+  function render() {
+    document.querySelectorAll(".nb").forEach((btn) => btn.classList.toggle("active", btn.dataset.view === view));
+    const main = document.getElementById("main");
+    if (view === "dashboard") main.innerHTML = renderDashboard();
+    else if (view === "roster") main.innerHTML = renderRoster();
+    else if (view === "attendance") main.innerHTML = renderAttendance();
+    else if (view === "grades") main.innerHTML = renderGrades();
+    else if (view === "notes") main.innerHTML = renderNotes();
+  }
+
+  document.querySelectorAll(".nb").forEach((btn) => btn.addEventListener("click", () => setView(btn.dataset.view)));
+
+  initPinScreen();
+  renderPinDots();
+
+  // Start listening for Firestore data now that every function above
+  // (attachStudentsListener, render, etc.) actually exists — but only
+  // if Firebase actually initialized. If it didn't, the PIN pad and
+  // app shell still work; you'll just see an empty student list and
+  // the error badge above until the Firebase issue is fixed.
+  if (!firebaseInitError) {
+    attachStudentsListener();
+    loadAssignmentMeta();
+  }
+</script>
+</body>
+</html>
