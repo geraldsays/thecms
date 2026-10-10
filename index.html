@@ -5,10 +5,61 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Class 5A — Classroom Manager (Cloud)</title>
 
-<!-- Firebase SDKs (compat style — plain script tags, no build step) -->
-<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+<!-- Firebase SDKs (compat style — plain script tags, no build step).
+     crossorigin="anonymous" is important here: without it, browsers
+     collapse any error thrown inside these externally-hosted scripts
+     down to a generic, un-debuggable "Script error." with no real
+     message or location — which is exactly what was hiding the
+     actual bug until now. -->
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js" crossorigin="anonymous"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js" crossorigin="anonymous"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js" crossorigin="anonymous"></script>
+
+<!-- SheetJS — reads/writes .xlsx and .csv entirely in the browser,
+     no backend needed. Used for roster import/export. -->
+<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" crossorigin="anonymous"></script>
+
+<!-- TEMPORARY DIAGNOSTIC: shows any JS error directly on screen,
+     so it can be read on a phone with no computer attached.
+     Safe to remove once the current issue is found. -->
+<script>
+  // Queues messages if document.body doesn't exist yet (this script
+  // runs in <head>, before <body> is parsed — an error firing this
+  // early would otherwise throw INSIDE the error handler itself
+  // trying to append to a null body, which can silently stop the
+  // whole page from rendering further. That was a real bug here.
+  var diagnosticQueue = [];
+  function showDiagnostic(text) {
+    diagnosticQueue.push(text);
+    flushDiagnosticQueue();
+  }
+  function flushDiagnosticQueue() {
+    if (!document.body || diagnosticQueue.length === 0) return;
+    var box = document.getElementById("errorDiagnosticBox");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "errorDiagnosticBox";
+      box.style.cssText = "position:fixed;bottom:0;left:0;right:0;background:#2b0000;color:#ff8080;font-family:monospace;font-size:12px;padding:12px;z-index:99999;max-height:40vh;overflow:auto;white-space:pre-wrap;border-top:2px solid #ff4757;";
+      document.body.appendChild(box);
+    }
+    while (diagnosticQueue.length) {
+      box.textContent += diagnosticQueue.shift() + "\n\n";
+    }
+  }
+  document.addEventListener("DOMContentLoaded", flushDiagnosticQueue);
+  window.addEventListener("error", function (e) {
+    var detail = e.error && e.error.stack ? e.error.stack : e.message;
+    showDiagnostic("ERROR: " + detail + "\n  at " + (e.filename || "?") + ":" + e.lineno + ":" + e.colno);
+  });
+  // Catches failures inside async/await code that nothing .catch()'d —
+  // a common silent-failure source, distinct from the synchronous
+  // errors "error" above catches.
+  window.addEventListener("unhandledrejection", function (e) {
+    var reason = e.reason;
+    var detail = reason && reason.stack ? reason.stack : (reason && reason.message) ? reason.message : String(reason);
+    showDiagnostic("UNHANDLED PROMISE REJECTION: " + detail);
+  });
+</script>
 
 <style>
 :root{--bg:#0f1117;--surface:#181c27;--surface2:#1e2335;--border:#2a3050;--accent:#00c896;--accent2:#0099ff;--warn:#ffb300;--danger:#ff4757;--text:#e8eaf0;--text2:#8892b0;--text3:#4a5568;--mono:"Courier New",monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;}
@@ -196,6 +247,7 @@ input:focus,select:focus{border-color:var(--accent);}
       <button class="nb" data-view="attendance"><span class="ic">✅</span>Attendance</button>
       <button class="nb" data-view="grades"><span class="ic">📝</span>Grades</button>
       <button class="nb" data-view="notes"><span class="ic">🗒️</span>Notes</button>
+      <button class="nb" data-view="settings"><span class="ic">⚙️</span>Settings</button>
     </div>
     <div class="sb-foot">
       <button class="tbtn" id="themeToggle">☀️ Light</button>
@@ -328,7 +380,10 @@ input:focus,select:focus{border-color:var(--accent);}
   // it no longer depends on Firebase succeeding first.)
   const badge = document.getElementById("connBadge");
   if (firebaseInitError) {
-    badge.textContent = "Firebase failed to connect — check console for error";
+    const sdkMissing = typeof firebase === "undefined";
+    badge.textContent = sdkMissing
+      ? "Could not load Firebase (no internet, or gstatic.com is blocked here) — reload with a connection"
+      : "Firebase failed to connect — check console for error";
     badge.className = "conn-badge conn-bad";
   } else {
     badge.textContent = "Connected (open testing mode — no auth)";
@@ -446,11 +501,19 @@ input:focus,select:focus{border-color:var(--accent);}
     try {
       const nextStudents = [];
       for (const doc of snapshot.docs) {
-        nextStudents.push({ accessCode: doc.id, ...doc.data() });
+        // Safe defaults set immediately — not after hydrateSubcollections()
+        // runs. Without this, any render() that fires in the gap between
+        // "students array updated" and "hydrate finished" (both are async
+        // and Firestore can fire snapshots mid-flight) hits student objects
+        // with no .grades/.attendance/.notes yet, which crashes any code
+        // that loops over them — this was the root cause of the "nothing
+        // responds" symptom.
+        nextStudents.push({ accessCode: doc.id, attendance: {}, grades: [], notes: [], ...doc.data() });
       }
       students = nextStudents;
+      render(); // render once immediately with safe-defaulted data, don't wait on hydrate
       await hydrateSubcollections();
-      render();
+      render(); // render again once full subcollection data has loaded
     } catch (err) {
       console.error("Error processing snapshot:", err);
     } finally {
@@ -501,6 +564,75 @@ input:focus,select:focus{border-color:var(--accent);}
   function startStudentEdit(code) { editingStudentCode = code; render(); }
   function cancelStudentEdit() { editingStudentCode = null; render(); }
 
+  // ---- Roster export/import (Excel/CSV, via SheetJS) ----
+  function exportRoster() {
+    const rows = students.map((s) => ({
+      Name: s.name,
+      Guardian: s.guardian || "",
+      "Parent Access Code": s.accessCode
+    }));
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Students");
+    const stamp = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(workbook, `class-5a-roster-${stamp}.xlsx`);
+  }
+
+  function triggerRosterImport() {
+    document.getElementById("rosterImportInput").click();
+  }
+
+  async function handleRosterImport(event) {
+    const file = event.target.files[0];
+    event.target.value = ""; // allow re-selecting the same file later
+    if (!file) return;
+
+    const importStatus = document.getElementById("importStatus");
+    if (importStatus) importStatus.textContent = "Reading file...";
+
+    try {
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data);
+      const firstSheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[firstSheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+      if (!rows.length) {
+        if (importStatus) importStatus.textContent = "The file has no rows to import.";
+        return;
+      }
+
+      // Accept a few common header spellings so this isn't picky about
+      // exactly matching our own export format.
+      function getField(row, candidates) {
+        for (const key of Object.keys(row)) {
+          if (candidates.includes(key.trim().toLowerCase())) return String(row[key]).trim();
+        }
+        return "";
+      }
+
+      let added = 0, skipped = 0;
+      for (const row of rows) {
+        const name = getField(row, ["name", "full name", "student name", "student"]);
+        const guardian = getField(row, ["guardian", "guardian name", "parent", "parent name"]);
+        if (!name) { skipped++; continue; }
+
+        const accessCode = generateAccessCode();
+        await db.collection("students").doc(accessCode).set({ name, guardian, createdAt: new Date().toISOString() });
+        students.push({ accessCode, name, guardian, attendance: {}, grades: [], notes: [] });
+        added++;
+      }
+
+      render();
+      if (importStatus) {
+        importStatus.textContent = `Imported ${added} student${added === 1 ? '' : 's'}.` + (skipped ? ` Skipped ${skipped} row(s) with no name.` : "");
+      }
+    } catch (err) {
+      console.error(err);
+      if (importStatus) importStatus.textContent = "Could not read that file. Make sure it's a .xlsx, .xls, or .csv file with Name/Guardian columns.";
+    }
+  }
+
   async function saveStudentEdit(code) {
     const newName = document.getElementById("editName-" + code).value.trim();
     const newGuardian = document.getElementById("editGuardian-" + code).value.trim();
@@ -532,9 +664,20 @@ input:focus,select:focus{border-color:var(--accent);}
   }
 
   // ---- Actions: Attendance ----
+  // IMPORTANT: writes below go to SUBCOLLECTIONS (students/{code}/attendance,
+  // .../grades, .../notes). Firestore's onSnapshot listener on the parent
+  // "students" collection does NOT fire when a subcollection's documents
+  // change — that's a hard platform behavior, not a bug. Without updating
+  // local state here directly, the UI would only catch up on a full reload
+  // (exactly the symptom reported: writes succeed, but nothing updates
+  // live until the app is reopened). So every write below also updates
+  // the in-memory `students` array and calls render() immediately.
   async function markAttendance(code, status) {
     try {
       await db.collection("students").doc(code).collection("attendance").doc(today).set({ status, date: today });
+      const s = findStudent(code);
+      if (s) s.attendance[today] = status;
+      render();
     } catch (err) {
       console.error(err);
       alert("Could not save attendance. Try again.");
@@ -549,6 +692,8 @@ input:focus,select:focus{border-color:var(--accent);}
       await Promise.all(students.map((s) =>
         db.collection("students").doc(s.accessCode).collection("attendance").doc(today).set({ status: "present", date: today })
       ));
+      students.forEach((s) => { s.attendance[today] = "present"; });
+      render();
     } catch (err) {
       console.error(err);
       alert("Could not mark everyone present. Try again.");
@@ -572,6 +717,7 @@ input:focus,select:focus{border-color:var(--accent);}
       await Promise.all(students.map((s) => {
         const exists = s.grades.some((g) => g.assignment === title);
         if (exists) return Promise.resolve();
+        s.grades.push({ assignment: title, score: null }); // local state, so the column shows immediately
         return db.collection("students").doc(s.accessCode).collection("grades").doc(title).set({ score: null });
       }));
       document.getElementById("newAssignmentName").value = "";
@@ -601,6 +747,16 @@ input:focus,select:focus{border-color:var(--accent);}
     const num = value === "" ? null : Math.max(0, Math.min(100, Number(value)));
     try {
       await db.collection("students").doc(code).collection("grades").doc(assignment).set({ score: num });
+      const s = findStudent(code);
+      if (s) {
+        const g = s.grades.find((g) => g.assignment === assignment);
+        if (g) g.score = num;
+        else s.grades.push({ assignment, score: num });
+      }
+      // Not re-rendering here: this fires on every keystroke-driven change
+      // event on a focused input, and a full re-render would rebuild the
+      // input out from under the user's cursor. The average shown will
+      // catch up on the next render (switching views, or any other write).
     } catch (err) {
       console.error(err);
       alert("Could not save the score. Try again.");
@@ -609,7 +765,7 @@ input:focus,select:focus{border-color:var(--accent);}
 
   function getAllAssignments() {
     const names = new Set();
-    students.forEach((s) => s.grades.forEach((g) => names.add(g.assignment)));
+    students.forEach((s) => (s.grades || []).forEach((g) => names.add(g.assignment)));
     return Array.from(names);
   }
 
@@ -620,7 +776,11 @@ input:focus,select:focus{border-color:var(--accent);}
     const text = input.value.trim();
     if (!text) return;
     try {
-      await db.collection("students").doc(code).collection("notes").add({ text, date: today, category: catSelect.value });
+      const category = catSelect.value;
+      const docRef = await db.collection("students").doc(code).collection("notes").add({ text, date: today, category });
+      const s = findStudent(code);
+      if (s) s.notes.unshift({ id: docRef.id, text, date: today, category });
+      render();
     } catch (err) {
       console.error(err);
       alert("Could not save the note. Try again.");
@@ -630,6 +790,9 @@ input:focus,select:focus{border-color:var(--accent);}
   async function deleteNote(code, noteId) {
     try {
       await db.collection("students").doc(code).collection("notes").doc(noteId).delete();
+      const s = findStudent(code);
+      if (s) s.notes = s.notes.filter((n) => n.id !== noteId);
+      render();
     } catch (err) {
       console.error(err);
       alert("Could not delete the note. Try again.");
@@ -711,8 +874,14 @@ input:focus,select:focus{border-color:var(--accent);}
     return `
       <div class="sh">
         <div class="st">Students <span>${students.length} enrolled</span></div>
-        <button class="btn bp" onclick="toggleAddForm()">+ Add student</button>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <input type="file" id="rosterImportInput" accept=".xlsx,.xls,.csv" class="hidden" onchange="handleRosterImport(event)">
+          <button class="btn bs" onclick="triggerRosterImport()">⬆ Import</button>
+          <button class="btn bs" onclick="exportRoster()" ${students.length ? "" : "disabled"}>⬇ Export</button>
+          <button class="btn bp" onclick="toggleAddForm()">+ Add student</button>
+        </div>
       </div>
+      <div class="sans" id="importStatus" style="font-size:12px; color:var(--text2); margin:-10px 0 16px;"></div>
 
       <div class="form-box hidden" id="addFormBox">
         <div class="fg">
@@ -721,6 +890,8 @@ input:focus,select:focus{border-color:var(--accent);}
         </div>
         <button class="btn bp" style="justify-self:start;" onclick="addStudent()">Save student</button>
       </div>
+
+      <div class="sans" style="font-size:12px; color:var(--text3); margin-bottom:16px;">Import expects columns named Name and Guardian (.xlsx, .xls, or .csv). Export downloads the current roster with access codes included.</div>
 
       ${students.length ? `
         <div class="tw">
@@ -878,6 +1049,66 @@ input:focus,select:focus{border-color:var(--accent);}
     `;
   }
 
+  // ---- Render: Settings ----
+  function renderSettings() {
+    return `
+      <div class="sh"><div class="st">Settings</div></div>
+
+      <div class="tw" style="padding:20px; margin-bottom:16px;">
+        <div style="font-weight:600; margin-bottom:6px;">About this version</div>
+        <div style="color:var(--text2); font-size:13px; line-height:1.5;">
+          Cloud-connected version of Class 5A Classroom Manager. Data syncs live to Firebase and is reachable from any device you unlock this app on.
+        </div>
+      </div>
+
+      <div class="tw" style="padding:20px; border-color:var(--danger);">
+        <div style="font-weight:600; margin-bottom:6px; color:var(--danger);">⚠ Reset everything</div>
+        <div style="color:var(--text2); font-size:13px; margin-bottom:14px; line-height:1.5;">
+          Permanently deletes every student, attendance record, grade, assignment, and note from the cloud database — for everyone, on every device, not just this one. Also clears this device's PIN. This cannot be undone.
+          <br><br>
+          Use this if the app gets stuck or you want to start completely fresh during testing. Not meant for routine use once this is handling real class data.
+        </div>
+        <button class="btn bd" onclick="resetEverything()">Reset app — delete all data</button>
+      </div>
+    `;
+  }
+
+  async function resetEverything() {
+    const confirm1 = confirm("This will permanently delete ALL students, attendance, grades, and notes from the cloud database — for every device, not just this one. Continue?");
+    if (!confirm1) return;
+    const confirm2 = confirm("Really sure? This cannot be undone. Type-check: tap OK only if you want a completely clean slate.");
+    if (!confirm2) return;
+
+    const main = document.getElementById("main");
+    main.innerHTML = `<div class="empty">Resetting… please wait, this may take a moment.</div>`;
+
+    try {
+      // Delete every student and their subcollections.
+      const studentsSnap = await db.collection("students").get();
+      for (const studentDoc of studentsSnap.docs) {
+        const subcollections = ["attendance", "grades", "notes"];
+        for (const sub of subcollections) {
+          const subSnap = await studentDoc.ref.collection(sub).get();
+          await Promise.all(subSnap.docs.map((d) => d.ref.delete()));
+        }
+        await studentDoc.ref.delete();
+      }
+
+      // Delete class-level assignment metadata.
+      const assignmentsSnap = await db.collection("assignments").get();
+      await Promise.all(assignmentsSnap.docs.map((d) => d.ref.delete()));
+
+      // Clear local PIN so the next open starts the "set a new PIN" flow.
+      localStorage.removeItem(PIN_KEY);
+
+      alert("Reset complete. The app will now reload.");
+      location.reload();
+    } catch (err) {
+      console.error(err);
+      main.innerHTML = `<div class="banner error">Reset failed partway through: ${escapeHtml(err.message)}. Some data may have been deleted. Check the Students page and try again if needed.</div>`;
+    }
+  }
+
   function render() {
     document.querySelectorAll(".nb").forEach((btn) => btn.classList.toggle("active", btn.dataset.view === view));
     const main = document.getElementById("main");
@@ -886,6 +1117,7 @@ input:focus,select:focus{border-color:var(--accent);}
     else if (view === "attendance") main.innerHTML = renderAttendance();
     else if (view === "grades") main.innerHTML = renderGrades();
     else if (view === "notes") main.innerHTML = renderNotes();
+    else if (view === "settings") main.innerHTML = renderSettings();
   }
 
   document.querySelectorAll(".nb").forEach((btn) => btn.addEventListener("click", () => setView(btn.dataset.view)));
